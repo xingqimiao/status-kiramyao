@@ -404,6 +404,36 @@ test('a boce node that could not connect is a failure even though error_code is 
   const dead = probes.find((p) => p.statusCode === null)
   assert.equal(dead.ok, false, 'a node with no HTTP response is never green')
   assert.match(dead.error, /connection reset/, 'the stored error names the real reason')
+  // And the round context leads, because that is the question the row answers. A bare
+  // "operation timed out" reads as our site failing; "2 of 28 nodes" reads correctly.
+  assert.match(dead.error, /该轮 3 个节点中 2 个无法连接/, 'the stored error says how many of how many')
+  assert.match(dead.error, /福建联通|河北移动/, 'and names the nodes that could not connect')
+})
+
+test('an unresolved incident on a daily row does not claim to be live', () => {
+  // 「持续中」 asserts we are watching right now. For a once-a-day sample the newest
+  // reading can be 24 hours old, so the honest label is that the last sample failed.
+  const store = freshStore()
+  seedGreen(store, 'site_overseas')
+  store.addProbe({ source: 'boce', component: 'site_cn', at: NOW - HOUR, ok: false, error: 'x' })
+
+  const config = testConfig({
+    boce: { enabled: true, apiKey: 'k', nodes: 'auto', intervalHours: 24, targetUrl: 'https://x/' },
+  })
+  const snapshot = buildSnapshot(store, config, { now: NOW })
+  const incident = snapshot.incidents.find((i) => i.component === 'site_cn')
+  assert.equal(incident.ongoing, true, 'the newest CN reading is a failure')
+  assert.equal(incident.intervalMinutes, 24 * 60, 'the cadence travels with the incident')
+  const html = renderPage(snapshot, config)
+  assert.ok(html.includes('最近一次采样失败'), 'and the daily row says only that the sample failed')
+  assert.ok(!html.includes('持续中'), 'never 「持续中」 for a daily sample')
+
+  // A fine-grained component keeps the live wording, because there it is true.
+  const store2 = freshStore()
+  seedGreen(store2, 'site_overseas')
+  store2.addProbe({ component: 'hrt_api', at: NOW - 5 * 60_000, ok: false })
+  const html2 = renderPage(buildSnapshot(store2, testConfig(), { now: NOW }), testConfig())
+  assert.ok(html2.includes('持续中'), 'a 30-minute row is still described as ongoing')
 })
 
 test('a healthy boce row is judged on http_code, not on alarming report text', () => {

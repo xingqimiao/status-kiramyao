@@ -1,0 +1,45 @@
+[Unit]
+Description=Kira status page
+Documentation=https://github.com/xingqimiao/xingqimiao.github.io
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=status
+Group=status
+WorkingDirectory=/srv/kira-status
+Environment=NODE_ENV=production
+# node:sqlite is still flagged experimental; the warning is pure noise here.
+Environment=NODE_NO_WARNINGS=1
+# Secrets (the boce key) live in /srv/kira-status/.env, readable only by the service user.
+ExecStart=/usr/bin/node server.mjs
+Restart=always
+RestartSec=3
+
+# --- Hardening: the service needs its database directory and nothing else ---
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+# The only writable path the process gets.
+ReadWritePaths=/srv/kira-status/data
+# This service reaches out to the sites it monitors, plus api.boce.com. There is no
+# useful narrower allow-list: the targets are the whole point and the operator may
+# add any of them by config. It listens on loopback only, which is the boundary that
+# matters.
+IPAddressAllow=any
+# No capabilities are needed to make outbound HTTP and write a SQLite file.
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

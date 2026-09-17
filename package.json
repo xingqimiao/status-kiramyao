@@ -1,0 +1,15 @@
+{
+  "name": "kiraequal-status",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kira status page: uptime, incidents, and the data-guardian figures (ARM Linux, zero runtime dependencies)",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "probe": "node bin/probe-once.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

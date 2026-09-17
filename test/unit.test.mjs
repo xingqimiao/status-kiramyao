@@ -281,14 +281,62 @@ test('boce rows become one probe per node, and an offline node is skipped', () =
 })
 
 test('a boce node that answered 200 but reported an error_code is a failure', () => {
-  // The calibration finding: error_code is the verdict, not http_code, and not the
-  // text of report_source. A run can get a 200 and still have failed.
+  // The calibration finding: a run can get a 200 and still have failed, so http_code
+  // alone is not the verdict.
   const store = freshStore()
   const summary = recordBoceRows(store, [
     { node_id: 6, error_code: 7, http_code: 200, error: 'proxy error', ip_region: '中国' },
   ], NOW)
   assert.equal(summary.failed, 1)
   assert.equal(store.probesFrom('boce', NOW - 1000)[0].ok, false)
+})
+
+test('a boce node that could not connect is a failure even though error_code is 0', () => {
+  // The case the calibration missed, and the most important one here: a node that
+  // fails to connect reports http_code 0 but still leaves error_code 0 and an empty
+  // `error`, with the reason only in report_source. Judging on error_code alone made
+  // it green. Rows below are verbatim from the first production run (2026-09-18),
+  // where 3 of 14 nodes did this.
+  const store = freshStore()
+  const summary = recordBoceRows(store, [
+    {
+      node_id: 32, node_name: '福建联通', error_code: 0, error: '', http_code: 0,
+      time_total: 0.568774, ip_region: '美国',
+      report_source: '> GET / HTTP/1.1\n> Host: kiramyao.com\ncurl: (7) read tcp4 192.168.5.13:53940->104.21.79.161:443: read: connection reset by peer\n\nhttp_code:0\n',
+    },
+    {
+      node_id: 7, node_name: '河北移动', error_code: 0, error: '', http_code: 0,
+      time_total: 10.001298, ip_region: '美国',
+      report_source: '> GET / HTTP/1.1\n\ncurl: (28) operation timed out\n\nhttp_code:0\n',
+    },
+    // A healthy node in the same batch, so the change cannot pass by failing everything.
+    { node_id: 6, node_name: '河北电信', error_code: 0, error: '', http_code: 200, time_total: 3.29, ip_region: '美国' },
+  ], NOW)
+
+  assert.equal(summary.ok, 1, 'only the node that got a response counts as reached')
+  assert.equal(summary.failed, 2, 'the two that could not connect are failures')
+
+  const probes = store.probesFrom('boce', NOW - 1000)
+  const dead = probes.find((p) => p.statusCode === null)
+  assert.equal(dead.ok, false, 'a node with no HTTP response is never green')
+  assert.match(dead.error, /connection reset/, 'the stored error names the real reason')
+})
+
+test('a healthy boce row is judged on http_code, not on alarming report text', () => {
+  // The other half of the calibration finding: report_source carries node-local noise
+  // (here a CA-bundle complaint) alongside a perfectly good 200. It must not decide
+  // the verdict — only describe an already-failed row.
+  const store = freshStore()
+  const summary = recordBoceRows(store, [
+    {
+      node_id: 6, node_name: '河北电信', error_code: 0, error: '', http_code: 200,
+      time_total: 3.29, ip_region: '美国',
+      report_source: '* Error reading ca cert file /etc/ssl/certs/ca-certificates.crt - mbedTLS\n< HTTP/1.1 200 OK\nhttp_code:200\n',
+    },
+  ], NOW)
+  assert.equal(summary.ok, 1, 'a healthy node stays healthy despite the noise')
+  assert.equal(store.probesFrom('boce', NOW - 1000)[0].ok, true)
+  assert.equal(store.probesFrom('boce', NOW - 1000)[0].error, null, 'and records no error')
 })
 
 // --- the probe itself -------------------------------------------------------

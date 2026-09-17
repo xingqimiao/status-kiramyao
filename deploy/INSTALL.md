@@ -98,8 +98,8 @@ Then start it in the foreground and look at the page:
 
 ```bash
 sudo -u status node server.mjs
-curl -s localhost:8789/status/health
-curl -s localhost:8789/status/ | head -20
+curl -s localhost:8789/health
+curl -s localhost:8789/ | head -20
 ```
 
 ## 6. Install the unit and the proxy block
@@ -154,15 +154,21 @@ inventing a green, which is the designed degradation.
 ## 8. What "working" looks like
 
 ```bash
-curl -s https://status.kiramyao.com/status/health
+curl -s https://status.kiramyao.com/health
 #  -> {"ok":true,"service":"status","newest_probe_age_ms":<small>,"boce_enabled":...}
 
-curl -s https://status.kiramyao.com/status/history.json | head -30
+curl -s https://status.kiramyao.com/history.json | head -30
 #  -> 90 days of cells per component
 
-# Outside the mount must not be served.
-curl -s -o /dev/null -w '%{http_code}\n' https://status.kiramyao.com/health   # 404
+# Anything that is not one of the three routes is refused.
+curl -s -o /dev/null -w '%{http_code}\n' https://status.kiramyao.com/nope   # 404
 ```
+
+The service is mounted at the host root (`BASE_PATH=/`), because it owns
+`status.kiramyao.com` outright rather than sharing a hostname by path prefix the way
+the comment service and the HRT Core share `api.kiramyao.com`. The Caddy block
+redirects `/status/*` to the equivalent root path, so URLs published before the move
+keep resolving.
 
 Load the page and read it, rather than trusting the exit codes: the banner should
 state a verdict, each component should have a strip with visible cells, and the

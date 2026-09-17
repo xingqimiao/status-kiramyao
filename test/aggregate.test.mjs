@@ -156,6 +156,31 @@ test('no probes at all is grey', () => {
   assert.equal(currentState([], { now: NOW, staleAfterMs: HOUR }), 'grey')
 })
 
+test('a CN round is judged on all its nodes, not on whichever one sorts last', () => {
+  // A CN round writes one probe per node at the same timestamp. Judging on the
+  // newest single probe made the row's state depend on ordering: the same 12-of-14
+  // healthy round could read green or red. Partial is amber, and it must not move
+  // when the failing node changes position in the array.
+  const at = NOW - 5 * 60 * 1000
+  const healthy = Array.from({ length: 12 }, () => ok(at))
+  const round = [...Array.from({ length: 2 }, () => bad(at)), ...healthy]
+  const reversed = [...round].reverse()
+  const opts = { now: NOW, staleAfterMs: HOUR }
+
+  assert.equal(currentState(round, opts), 'amber', 'some nodes failing is amber')
+  assert.equal(currentState(reversed, opts), 'amber', 'and does not depend on order')
+
+  assert.equal(currentState(healthy, opts), 'green', 'every node up is green')
+  assert.equal(currentState(Array.from({ length: 14 }, () => bad(at)), opts), 'red', 'no node up is red')
+
+  // A later round supersedes an earlier one rather than blending with it.
+  assert.equal(
+    currentState([...Array.from({ length: 14 }, () => bad(at)), ...healthy.map(() => ok(NOW - 60_000))], opts),
+    'green',
+    'only the newest round decides',
+  )
+})
+
 // --- overall ----------------------------------------------------------------
 
 test('the overall verdict is the worst live component, ignoring unknowns', () => {

@@ -71,14 +71,30 @@ Real response, trimmed to the fields we read:
 
 Three things that the docs do not say, and that a from-the-docs adapter gets wrong:
 
-1. **`error_code`, not HTTP, is the verdict — and `report_source` is not.** The
-   calibrated run came back `error_code: 0` with `http_code: 200`, while
+1. **The verdict is `error_code` *and* `http_code` — and `report_source` is neither.**
+   The calibrated run came back `error_code: 0` with `http_code: 200`, while
    `report_source` *began* with a node-local complaint about a CA bundle
    (`Error reading ca cert file ... mbedTLS`). That text is noise from the probe
    node's own environment. A parser that scans `report_source` for the word "Error"
-   would mark a healthy site down. **Read `error_code`; treat `error_code != 0` as
-   the failure.** `error` may contain `not found node`, which means the node is
-   offline — and, per the docs, is **not billed**.
+   would mark a healthy site down. `error` may contain `not found node`, which means
+   the node is offline — and, per the docs, is **not billed**.
+
+   **Correction, 2026-09-18 — `error_code` alone is not enough.** The first
+   production run showed that a node which cannot reach the site reports
+   `http_code: 0` while still leaving `error_code: 0` **and** `error: ""`; the real
+   reason (`curl: (7) ... connection reset by peer`, `curl: (28) operation timed
+   out`, `Recv failure: Connection`) appears only inside `report_source`. Three of
+   the first fourteen nodes did exactly this, and judging on `error_code` alone
+   recorded all three as **green** — a fabricated all-clear on the one row whose
+   entire purpose is "can mainland China reach us". The verdict is:
+
+   ```
+   reached = (error_code === 0) && (http_code > 0)
+   ```
+
+   `report_source` still decides nothing: it is read only to fill in the `error`
+   text of a row already judged failed, which is why the CA-bundle noise above stays
+   harmless. Both halves are pinned in `test/unit.test.mjs`.
 
 2. **A mainland node can resolve to a non-China IP.** Node 6 is 河北电信 (Hebei
    Telecom) but reported `remote_ip: 104.21.79.161` with `ip_region: 美国` and
@@ -95,9 +111,16 @@ Three things that the docs do not say, and that a from-the-docs adapter gets wro
 
 ## Cost, restated
 
-`1 波点 / node / check`. The settled configuration is **~30 nodes once daily**:
-`30 × 1 × 1 = 30 波点/day`. At the platform's rate that is roughly
-**0.06 CNY/day ≈ 1.8 CNY/month**.
+`1 波点 / node / check`. The settled configuration is **28 nodes once daily**
+(`BOCE_AUTO_NODES` — the verified live set, not the nominal 30):
+`28 × 1 × 1 = 28 波点/day`. At the platform's rate that is roughly
+**0.056 CNY/day ≈ 1.7 CNY/month**.
+
+Node ids are re-verified periodically because boce **retires** nodes: a stale id does
+not fail loudly, it makes the create call answer `no task to do` and quietly drops out
+of the round. Ask for 30 and get 14 billed and you have neither the coverage nor the
+cost you budgeted. To re-verify, probe ids one at a time — a bad id reports per node,
+so a single-node call is the honest test — and replace the dead ones.
 
 Not implemented, and each for a stated reason:
 

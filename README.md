@@ -61,7 +61,7 @@ one reads exactly like one that has not.
 | HRT Core health | local | 30 min | free |
 | tracker web app | local | 30 min | free |
 | marketing site (overseas) | local, from Singapore | 30 min | free |
-| marketing site (mainland CN) | **boce** | **daily** | ~30 nodes × 1 波点 ≈ 0.06 CNY/day |
+| marketing site (mainland CN) | **boce** | **daily** | 28 nodes × 1 波点 ≈ 0.056 CNY/day |
 
 The CN probe uses boce's HTTP检测, not PING测速: the question is site reachability,
 so HTTP covers the real path (DNS → TCP → TLS/SNI → status) while ICMP would

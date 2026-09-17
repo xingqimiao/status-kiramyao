@@ -18,7 +18,9 @@ import { openDb, createStore } from '../lib/db.mjs'
 import { buildSnapshot, HEALTH_COMPONENT } from '../lib/snapshot.mjs'
 import { renderPage, renderHistory } from '../lib/view.mjs'
 import { loadConfig } from '../lib/config.mjs'
-import { recordBoceRows, resolveNodes, BOCE_AUTO_NODES, probeUrl } from '../lib/probe.mjs'
+import {
+  recordBoceRows, resolveNodes, BOCE_AUTO_NODES, probeUrl, readCloudflareVisits,
+} from '../lib/probe.mjs'
 
 const HOUR = 60 * 60 * 1000
 const NOW = Date.UTC(2026, 8, 17, 12, 0, 0)
@@ -514,4 +516,55 @@ test('a 3xx after following redirects counts as reachable', async () => {
     fetchImpl: async () => ({ status: 200 }),
   })
   assert.equal(result.ok, true)
+})
+
+// --- Cloudflare edge analytics ------------------------------------------------
+
+test('edge visits are summed per hostname, with the port stripped', () => {
+  // Two things this pins, both found by inspecting real responses first:
+  //
+  //   * The zone reports the same hostname across ports (`kiramyao.com:8443`,
+  //     `hrt.kiramyao.com:80`), so an exact match on the hostname would silently
+  //     undercount. Everything for a host must be summed.
+  //   * Hosts with no traffic are omitted by Cloudflare entirely, so a host that is
+  //     absent is a real zero — but *no* known host at all means the query was wrong,
+  //     and that is a failure rather than a zero. Reporting 0 for it would be the
+  //     fabrication this whole service avoids.
+  const body = {
+    data: { viewer: { zones: [{ httpRequestsAdaptiveGroups: [
+      { count: 4137, sum: { visits: 756 }, dimensions: { clientRequestHTTPHost: 'kiramyao.com' } },
+      { count: 134, sum: { visits: 7 }, dimensions: { clientRequestHTTPHost: 'kiramyao.com:8443' } },
+      { count: 1622, sum: { visits: 260 }, dimensions: { clientRequestHTTPHost: 'hrt.kiramyao.com' } },
+      { count: 56, sum: { visits: 23 }, dimensions: { clientRequestHTTPHost: 'hrt.kiramyao.com:443' } },
+      { count: 3988, sum: { visits: 3 }, dimensions: { clientRequestHTTPHost: 'api.kiramyao.com' } },
+    ] }] } },
+  }
+  const fetchImpl = async () => ({ ok: true, json: async () => body })
+
+  return readCloudflareVisits({ apiToken: 't', zoneTag: 'z' }, { fetchImpl }).then((r) => {
+    assert.equal(r.ok, true)
+    assert.equal(r.site, 763, 'kiramyao.com plus its :8443 traffic')
+    assert.equal(r.tracker, 283, 'hrt.kiramyao.com plus its :443 traffic')
+  })
+})
+
+test('a GraphQL error is a failure, not a zero', () => {
+  // A bad token answers HTTP 200 with an `errors` array, so the status code alone is
+  // not a verdict.
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ errors: [{ message: 'not authorized' }] }) })
+  return readCloudflareVisits({ apiToken: 'bad', zoneTag: 'z' }, { fetchImpl }).then((r) => {
+    assert.equal(r.ok, false)
+    assert.match(r.error, /not authorized/)
+  })
+})
+
+test('unconfigured Cloudflare is skipped, and the metric stays absent', () => {
+  const store = freshStore()
+  seedGreen(store, 'hrt_web')
+  const snapshot = buildSnapshot(store, testConfig(), { now: NOW })
+  assert.equal(snapshot.guardian.visitsSite, null, 'no configuration means no number')
+  assert.equal(snapshot.guardian.visitsTracker, null)
+  const html = renderPage(snapshot, testConfig())
+  assert.ok(html.includes('kiramyao.com 访问量'), 'the tiles are present')
+  assert.ok(html.includes('—'), 'and show an em dash rather than a zero')
 })

@@ -15,7 +15,10 @@ import { createServer } from 'node:http'
 
 import { loadConfig } from './lib/config.mjs'
 import { openDb, createStore } from './lib/db.mjs'
-import { runLocalProbes, runBoceProbe, readHrtStats, readCommentsStats, readStoryCount } from './lib/probe.mjs'
+import {
+  runLocalProbes, runBoceProbe, readHrtStats, readCommentsStats, readStoryCount,
+  readCloudflareVisits,
+} from './lib/probe.mjs'
 import { buildSnapshot, HEALTH_COMPONENT } from './lib/snapshot.mjs'
 import { renderPage, renderHistory } from './lib/view.mjs'
 
@@ -68,6 +71,18 @@ async function metricsRound() {
       store.addMetric('stories.preserved', stories.stories, now)
     } else {
       process.stderr.write(`story catalogue unavailable: ${stories.error}\n`)
+    }
+    // Cloudflare edge visits. Optional: with no credentials this block is skipped
+    // rather than failing, and the page shows "—" because the value is absent rather
+    // than zero — the same rule the other metrics follow.
+    if (config.cloudflare) {
+      const visits = await readCloudflareVisits(config.cloudflare, { now })
+      if (visits.ok) {
+        store.addMetric('visits.site', visits.site, now)
+        store.addMetric('visits.tracker', visits.tracker, now)
+      } else {
+        process.stderr.write(`cloudflare visits unavailable: ${visits.error}\n`)
+      }
     }
     currentSnapshot = buildSnapshot(store, config)
   } catch (error) {

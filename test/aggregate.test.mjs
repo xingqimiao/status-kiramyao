@@ -32,8 +32,32 @@ test('one state per set of probes, and an empty set is unknown rather than fine'
   assert.equal(stateForProbes([]), 'grey')
   assert.equal(stateForProbes(undefined), 'grey')
   assert.equal(stateForProbes([ok(NOW), ok(NOW)]), 'green')
+  // No tolerance by default: for a local probe any failure is a failure.
   assert.equal(stateForProbes([ok(NOW), bad(NOW)]), 'amber')
   assert.equal(stateForProbes([bad(NOW), bad(NOW)]), 'red')
+})
+
+test('a component tolerates its own normal failure rate', () => {
+  // The CN row is sampled across ~28 nodes on three carriers, from a country whose
+  // routes to a Cloudflare-fronted site vary by province. A couple of nodes failing is
+  // the ordinary state of the network, so with a 20% tolerance it stays green — which
+  // is what stops the page reading amber every single day until nobody looks at it.
+  const round = (okCount, badCount) => [
+    ...Array.from({ length: okCount }, () => ok(NOW)),
+    ...Array.from({ length: badCount }, () => bad(NOW)),
+  ]
+  const TOL = 0.2
+
+  assert.equal(stateForProbes(round(28, 0), TOL), 'green', 'a clean round')
+  assert.equal(stateForProbes(round(26, 2), TOL), 'green', '2 of 28 is within normal')
+  assert.equal(stateForProbes(round(24, 4), TOL), 'green', '4 of 28 is 14%, still within')
+  assert.equal(stateForProbes(round(22, 6), TOL), 'amber', '6 of 28 is 21%, past the line')
+  assert.equal(stateForProbes(round(15, 13), TOL), 'amber', 'just under half')
+  assert.equal(stateForProbes(round(13, 15), TOL), 'red', 'a majority unreachable is an outage')
+
+  // And the tolerance is genuinely per component: the same 2-of-28 round is a failure
+  // for a local probe, where there is no normal failure rate.
+  assert.equal(stateForProbes(round(26, 2), 0), 'amber')
 })
 
 test('severity orders the four states, and grey never worsens a reading', () => {

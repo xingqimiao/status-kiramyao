@@ -185,6 +185,42 @@ test('the CN row stays current for its own cadence, not the local one', () => {
   )
 })
 
+test('ordinary CN node failures do not become a fault on the page', () => {
+  // The behaviour the operator asked for: a handful of unreachable nodes is the normal
+  // state of routes into mainland China, and a page that calls every such day amber is
+  // a page nobody reads. 26 of 28 reachable is green; it also opens no incident.
+  const store = freshStore()
+  seedGreen(store, 'site_overseas')
+  const at = NOW - HOUR
+  for (let i = 0; i < 28; i++) {
+    store.addProbe({ source: 'boce', component: 'site_cn', at, ok: i >= 2, error: i < 2 ? 'curl: (28) operation timed out' : null })
+  }
+
+  const config = testConfig({
+    boce: { enabled: true, apiKey: 'k', nodes: 'auto', intervalHours: 24, targetUrl: 'https://x/' },
+  })
+  const snapshot = buildSnapshot(store, config, { now: NOW })
+  const cn = snapshot.components.find((c) => c.id === 'site_cn')
+  assert.equal(cn.state, 'green', '2 of 28 nodes failing is within the tolerated rate')
+  assert.equal(cn.uptime, 26 / 28, 'but uptime still counts the failures — it is a measurement')
+  assert.equal(
+    snapshot.incidents.filter((i) => i.component === 'site_cn').length, 0,
+    'and a tolerated round does not open an incident',
+  )
+
+  // Past the tolerated rate it must still speak up, or the tolerance has swallowed the
+  // signal it was supposed to leave alone.
+  const store2 = freshStore()
+  seedGreen(store2, 'site_overseas')
+  const at2 = NOW - HOUR
+  for (let i = 0; i < 28; i++) {
+    store2.addProbe({ source: 'boce', component: 'site_cn', at: at2, ok: i >= 10, error: i < 10 ? 'x' : null })
+  }
+  const snap2 = buildSnapshot(store2, config, { now: NOW })
+  assert.equal(snap2.components.find((c) => c.id === 'site_cn').state, 'amber', '10 of 28 is past it')
+  assert.equal(snap2.incidents.filter((i) => i.component === 'site_cn').length, 1, 'so it is reported')
+})
+
 test('a CN outage is measured in days, not in 30-minute rounds', () => {
   // The bug this pins: with a 30-minute-derived gap, the next daily probe (24h later)
   // arrived "after a silence", so the incident was closed at its last failure and then

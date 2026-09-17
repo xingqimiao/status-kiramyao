@@ -158,6 +158,90 @@ test('the merged strip is green when CN was not configured at all', () => {
   assert.equal(today.state, 'green')
 })
 
+test('the CN row stays current for its own cadence, not the local one', () => {
+  // The CN row is sampled daily while everything else is sampled every 30 minutes.
+  // One window derived from `probeIntervalMinutes` gave it 90 minutes to be current
+  // in, so a daily probe was stale by definition and the row read grey 23.5 hours a
+  // day. Twelve hours after a sample it must still be showing what it saw.
+  const store = freshStore()
+  seedGreen(store, 'site_overseas')
+  seedGreen(store, 'site_cn', { source: 'boce', count: 1, at: NOW - 12 * HOUR })
+
+  const snapshot = buildSnapshot(store, testConfig({
+    boce: { enabled: true, apiKey: 'k', nodes: 'auto', intervalHours: 24, targetUrl: 'https://x/' },
+  }), { now: NOW })
+
+  const cn = snapshot.components.find((c) => c.id === 'site_cn')
+  assert.equal(cn.state, 'green', 'a daily probe is still current 12h later')
+
+  // But it must not stay current forever: three missed daily rounds is three days.
+  const stale = buildSnapshot(store, testConfig({
+    boce: { enabled: true, apiKey: 'k', nodes: 'auto', intervalHours: 24, targetUrl: 'https://x/' },
+  }), { now: NOW + 4 * 24 * HOUR })
+  assert.equal(
+    stale.components.find((c) => c.id === 'site_cn').state,
+    'grey',
+    'and goes grey once the loop has missed rounds',
+  )
+})
+
+test('a CN outage is measured in days, not in 30-minute rounds', () => {
+  // The bug this pins: with a 30-minute-derived gap, the next daily probe (24h later)
+  // arrived "after a silence", so the incident was closed at its last failure and then
+  // a fresh one opened — reporting a routine daily failure as a two-day ongoing outage.
+  const store = freshStore()
+  seedGreen(store, 'site_overseas')
+  const dayMs = 24 * HOUR
+  // Day 1: the CN round fails. Day 2: it fails again. Day 3: it recovers.
+  store.addProbe({ source: 'boce', component: 'site_cn', at: NOW - 2 * dayMs, ok: false, error: 'x' })
+  store.addProbe({ source: 'boce', component: 'site_cn', at: NOW - 1 * dayMs, ok: false, error: 'x' })
+  store.addProbe({ source: 'boce', component: 'site_cn', at: NOW - 1 * HOUR, ok: true })
+
+  const snapshot = buildSnapshot(store, testConfig({
+    boce: { enabled: true, apiKey: 'k', nodes: 'auto', intervalHours: 24, targetUrl: 'https://x/' },
+  }), { now: NOW })
+
+  const cnIncidents = snapshot.incidents.filter((i) => i.component === 'site_cn')
+  assert.equal(cnIncidents.length, 1, 'two consecutive failing days are one incident')
+  assert.equal(cnIncidents[0].ongoing, false, 'and it is closed by the recovery')
+  // Two days of failure, not two minutes.
+  assert.ok(
+    cnIncidents[0].durationMs >= dayMs,
+    `a two-day CN failure should last about two days, got ${cnIncidents[0].durationMs}ms`,
+  )
+})
+
+test('a node that cannot read its own CA bundle is not reported as our cert problem', () => {
+  // mbedTLS failing to read /etc/ssl/certs on the probe node says nothing about our
+  // site, and it fires intermittently on nodes that answer 200 seconds later. Surfacing
+  // it as the outage reason sends a reader hunting for a certificate fault we do not
+  // have. A genuine reason in the same report must still win.
+  // Both forms below are verbatim from live probe reports. Note they differ: curl
+  // prefixes `curl: (28)` when the attempt failed, and leaves a bare `* ` verbose line
+  // when it succeeded anyway. The failing form is the one that reaches `curlReason`.
+  const store = freshStore()
+  const noisy = {
+    node_id: 12, node_name: '陕西电信', error_code: 0, error: '', http_code: 0,
+    time_total: 10, ip_region: '美国',
+    report_source: 'curl: (28) Error reading ca cert file /etc/ssl/certs/ca-certificates.crt - mbedTLS: (-0x3E00) PK - Read/write of file failed\n\nhttp_code:0\n',
+  }
+  const withReason = {
+    node_id: 55, node_name: '云南移动', error_code: 0, error: '', http_code: 0,
+    time_total: 10, ip_region: '美国',
+    report_source: '> GET / HTTP/1.1\ncurl: (28) operation timed out\n\nhttp_code:0\n',
+  }
+  recordBoceRows(store, [noisy, withReason], NOW)
+  const probes = store.probesFrom('boce', NOW - 1000)
+  const noisyProbe = probes.find((p) => p.statusCode === null && /CA 证书/.test(p.error ?? ''))
+  assert.ok(noisyProbe, 'the CA-bundle failure is summarised as the node failing its own check')
+  assert.ok(
+    !/ca cert file/i.test(noisyProbe.error),
+    'and does not repeat the node-local mbedTLS text as if it were the cause',
+  )
+  const realProbe = probes.find((p) => /timed out/.test(p.error ?? ''))
+  assert.ok(realProbe, 'a real connect failure is still reported verbatim')
+})
+
 test('a missing metric is null in the snapshot, not zero', () => {
   const store = freshStore()
   seedGreen(store, 'hrt_web')

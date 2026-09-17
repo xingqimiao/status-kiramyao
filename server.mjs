@@ -189,6 +189,31 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body))
 }
 
+/**
+ * Probe boce on boot **only if the last sample is not still fresh**.
+ *
+ * The local probes are free, so running them on boot is pure win. The CN sample is
+ * paid, per node, and restarting the service is not a reason to buy another one. Doing
+ * it unconditionally meant a deploy loop or a crash-restart cycle spent the whole daily
+ * budget in minutes: five restarts in two hours is 140 波点 against a settled 28/day.
+ *
+ * `intervalHours / 2` is the cutoff, so a restart skips the call while the sample from
+ * this morning is still good, and a genuine cold start still shows a CN row promptly.
+ */
+function boceRoundIfStale() {
+  if (!config.boce.enabled) return
+  const newest = store.latestFor('site_cn')
+  const ageMs = newest ? Date.now() - newest.at : Infinity
+  const maxAgeMs = (config.boce.intervalHours * 60 * 60_000) / 2
+  if (ageMs < maxAgeMs) {
+    process.stdout.write(
+      `boce: skipping the boot round, newest sample is ${Math.round(ageMs / 60_000)}m old\n`,
+    )
+    return
+  }
+  void boceRound()
+}
+
 server.listen(config.port, config.host, () => {
   process.stdout.write(
     `kira-status listening on ${config.host}:${config.port}${config.basePath || '/'}`
@@ -198,7 +223,7 @@ server.listen(config.port, config.host, () => {
   // page of grey within seconds, not in half an hour.
   void localProbeRound()
   void metricsRound()
-  void boceRound()
+  boceRoundIfStale()
 })
 
 const probeTimer = setInterval(localProbeRound, config.probeIntervalMinutes * 60_000)

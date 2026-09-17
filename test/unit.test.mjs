@@ -548,6 +548,28 @@ test('edge visits are summed per hostname, with the port stripped', () => {
   })
 })
 
+test('the visits query excludes crawlers and command-line clients', () => {
+  // The accuracy decision, pinned so it cannot be dropped by accident. Both terms were
+  // chosen from what the zone actually recorded: 73 visits in a 20h window came from
+  // classified crawlers, and 81 of hrt's 286 visits were `curl` — including our own
+  // verification traffic, which hit /privacy 38 times. A page that counts its own health
+  // checks as visitors flatters itself.
+  let sent = null
+  const fetchImpl = async (_url, init) => {
+    sent = JSON.parse(init.body).query
+    return { ok: true, json: async () => ({ data: { viewer: { zones: [{ httpRequestsAdaptiveGroups: [
+      { count: 1, sum: { visits: 5 }, dimensions: { clientRequestHTTPHost: 'kiramyao.com' } },
+    ] }] } } }) }
+  }
+  return readCloudflareVisits({ apiToken: 't', zoneTag: 'z' }, { fetchImpl }).then((r) => {
+    assert.equal(r.ok, true)
+    assert.match(sent, /verifiedBotCategory: ""/, 'classified crawlers are excluded')
+    assert.match(sent, /userAgentBrowser_neq: "Curl"/, 'command-line clients are excluded')
+    // And the result says what it is, so the page cannot claim these are people.
+    assert.equal(r.hours, 24)
+  })
+})
+
 test('a GraphQL error is a failure, not a zero', () => {
   // A bad token answers HTTP 200 with an `errors` array, so the status code alone is
   // not a verdict.

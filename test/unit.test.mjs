@@ -27,7 +27,7 @@ const NOW = Date.UTC(2026, 8, 17, 12, 0, 0)
 function testConfig(overrides = {}) {
   return {
     basePath: '/status',
-    siteName: 'Kira Status',
+    siteName: 'KiraMyao',
     publicOrigin: 'https://status.kiramyao.com',
     probeIntervalMinutes: 30,
     historyDays: 90,
@@ -192,7 +192,7 @@ test('rendering a page performs no network I/O', () => {
     const snapshot = buildSnapshot(store, testConfig(), { now: NOW })
     const html = renderPage(snapshot, testConfig())
     const json = renderHistory(snapshot, testConfig())
-    assert.ok(html.includes('Kira Status'))
+    assert.ok(html.includes('KiraMyao'))
     assert.ok(json.includes('hrt_web'))
   } finally {
     globalThis.fetch = original
@@ -207,8 +207,13 @@ test('the page reports the overall verdict and shows every component', () => {
   const snapshot = buildSnapshot(store, testConfig(), { now: NOW })
   const html = renderPage(snapshot, testConfig())
   assert.ok(html.includes('所有系统正常运行'), 'the banner states the verdict')
-  assert.ok(html.includes('Kira 记录'), 'and a configured component is listed')
+  assert.ok(html.includes('Kira Tracker'), 'and a configured component is listed')
   assert.ok(html.includes('s-green'), 'with its state class')
+  // Every row is named after the thing watched, never the vantage point: a reader
+  // cannot act on "本站", and the two site rows are told apart by CN / Global.
+  assert.ok(html.includes('kiramyao.com'), 'the site row uses its real name')
+  assert.ok(html.includes('>CN<') && html.includes('>Global<'), 'and is split by vantage point')
+  assert.ok(!html.includes('本站'), 'the vague label is gone')
 })
 
 test('a missing metric renders an em dash rather than a zero', () => {

@@ -144,7 +144,7 @@ test('the page renders as HTML when a browser asks for it', async () => {
   assert.equal(res.status, 200)
   assert.match(res.headers.get('content-type'), /text\/html/)
   const html = await res.text()
-  assert.ok(html.includes('Kira Status'), 'the site name is on the page')
+  assert.ok(html.includes('KiraMyao'), 'the site name is on the page')
   assert.ok(html.includes('系统状态'), 'and the system section')
   assert.ok(html.includes('数据守护'), 'and the data-guardian section')
 })

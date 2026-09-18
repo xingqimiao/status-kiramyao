@@ -17,7 +17,7 @@ import { loadConfig } from './lib/config.mjs'
 import { openDb, createStore } from './lib/db.mjs'
 import {
   runLocalProbes, runBoceProbe, readHrtStats, readCommentsStats, readStoryCount,
-  readCloudflareVisits,
+  readCloudflareVisits, nextBoceDelayMs,
 } from './lib/probe.mjs'
 import { buildSnapshot, HEALTH_COMPONENT } from './lib/snapshot.mjs'
 import { renderPage, renderHistory } from './lib/view.mjs'
@@ -205,28 +205,41 @@ function sendJson(res, status, body) {
 }
 
 /**
- * Probe boce on boot **only if the last sample is not still fresh**.
+ * Schedule the CN round, chaining rather than repeating.
  *
- * The local probes are free, so running them on boot is pure win. The CN sample is
- * paid, per node, and restarting the service is not a reason to buy another one. Doing
- * it unconditionally meant a deploy loop or a crash-restart cycle spent the whole daily
- * budget in minutes: five restarts in two hours is 140 波点 against a settled 28/day.
- *
- * `intervalHours / 2` is the cutoff, so a restart skips the call while the sample from
- * this morning is still good, and a genuine cold start still shows a CN row promptly.
+ * `setInterval` cannot express "every day at midnight" once daylight saving or a clock
+ * correction is in play: a fixed 24-hour period slides an hour twice a year and never
+ * comes back. Recomputing the delay after each round keeps the target pinned to the wall
+ * clock, which is what an operator asking for "0点跑一次" actually means.
  */
-function boceRoundIfStale() {
-  if (!config.boce.enabled) return
+let boceTimer = null
+
+/** Whether a CN sample was already taken today, so a second one is not bought. */
+function boceRanToday(now = Date.now()) {
+  const startOfDay = new Date(now)
+  startOfDay.setHours(0, 0, 0, 0)
   const newest = store.latestFor('site_cn')
-  const ageMs = newest ? Date.now() - newest.at : Infinity
-  const maxAgeMs = (config.boce.intervalHours * 60 * 60_000) / 2
-  if (ageMs < maxAgeMs) {
-    process.stdout.write(
-      `boce: skipping the boot round, newest sample is ${Math.round(ageMs / 60_000)}m old\n`,
-    )
-    return
-  }
-  void boceRound()
+  return newest !== null && newest.at >= startOfDay.getTime()
+}
+
+function scheduleBoce() {
+  if (!config.boce.enabled) return
+  const delayMs = nextBoceDelayMs(config.boce.hourOfDay)
+  boceTimer = setTimeout(async () => {
+    // Guard against a manual round (or an unusual restart) having already sampled
+    // today. The schedule being wall-clock-aligned makes a double-spend unlikely
+    // rather than impossible, and this is the call that costs money.
+    if (boceRanToday()) {
+      process.stdout.write('boce: today already has a sample, not spending another\n')
+    } else {
+      await boceRound()
+    }
+    scheduleBoce()
+  }, delayMs)
+  boceTimer.unref?.()
+  process.stdout.write(
+    `boce: next CN sample in ${Math.round(delayMs / 60_000)}m (daily at ${String(config.boce.hourOfDay).padStart(2, '0')}:00 local)\n`,
+  )
 }
 
 server.listen(config.port, config.host, () => {
@@ -235,21 +248,23 @@ server.listen(config.port, config.host, () => {
     + ` (probe every ${config.probeIntervalMinutes}m, boce ${config.boce.enabled ? 'on' : 'off'})\n`,
   )
   // Probe immediately on boot: a fresh deploy should show something other than a
-  // page of grey within seconds, not in half an hour.
+  // page of grey within seconds, not in half an hour. The local probes are free, so
+  // this is unconditional.
   void localProbeRound()
   void metricsRound()
-  boceRoundIfStale()
+  // A cold start with no CN sample at all should not wait until midnight to draw one;
+  // that is the old "page of grey" problem on a brand-new deploy. A restart that
+  // already has today's sample does nothing, which is what keeps the budget safe.
+  if (config.boce.enabled && store.latestFor('site_cn') === null) void boceRound()
+  scheduleBoce()
 })
 
 const probeTimer = setInterval(localProbeRound, config.probeIntervalMinutes * 60_000)
 const metricsTimer = setInterval(metricsRound, config.probeIntervalMinutes * 60_000)
-const boceTimer = config.boce.enabled
-  ? setInterval(boceRound, config.boce.intervalHours * 60 * 60 * 1000)
-  : null
 // Daily, at a time nothing else is happening.
 const pruneTimer = setInterval(prune, 24 * 60 * 60 * 1000)
 
-for (const timer of [probeTimer, metricsTimer, boceTimer, pruneTimer]) {
+for (const timer of [probeTimer, metricsTimer, pruneTimer]) {
   if (timer) timer.unref?.()
 }
 

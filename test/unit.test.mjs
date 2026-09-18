@@ -20,6 +20,7 @@ import { renderPage, renderHistory } from '../lib/view.mjs'
 import { loadConfig } from '../lib/config.mjs'
 import {
   recordBoceRows, resolveNodes, BOCE_AUTO_NODES, probeUrl, readCloudflareVisits,
+  nextBoceDelayMs,
 } from '../lib/probe.mjs'
 
 const HOUR = 60 * 60 * 1000
@@ -589,4 +590,47 @@ test('unconfigured Cloudflare is skipped, and the metric stays absent', () => {
   const html = renderPage(snapshot, testConfig())
   assert.ok(html.includes('kiramyao.com 访问量'), 'the tiles are present')
   assert.ok(html.includes('—'), 'and show an em dash rather than a zero')
+})
+
+// --- the daily CN schedule ---------------------------------------------------
+//
+// The defect these pin: the CN sample ran on a 24-hour interval measured from boot,
+// with a boot-time skip guard. A restart at 06:12 with a 656-minute-old sample was
+// skipped (under the 720-minute ceiling), and the fresh timer then waited until 06:12
+// the next morning — ~35 hours with no sample and a CN row reading grey. Anchoring to
+// a time of day removes the whole class: a restart cannot move or skip it.
+
+test('the CN schedule targets the configured hour, not an interval from boot', () => {
+  // 06:12 local. Midnight has passed, so the next one is tomorrow's — this is exactly
+  // the restart in the incident, and the answer must be ~17h48m, not 24h and not 0.
+  const at0612 = new Date(2026, 8, 18, 6, 12, 15)
+  const delay = nextBoceDelayMs(0, at0612)
+  assert.equal(Math.round(delay / 60_000), 17 * 60 + 48, 'the remaining minutes to midnight')
+
+  // The delay depends on the wall clock, so two different boot times converge on the
+  // same target rather than each carrying its own 24-hour period.
+  // 23:00 to midnight is 60 minutes less the seconds component of `now`, so round to
+  // the hour rather than to the minute.
+  const at2300 = new Date(2026, 8, 18, 23, 0, 0)
+  assert.equal(Math.round(nextBoceDelayMs(0, at2300) / HOUR) , 1, 'one hour from 23:00')
+
+  const at0001 = new Date(2026, 8, 18, 0, 1, 0)
+  assert.equal(
+    Math.round(nextBoceDelayMs(0, at0001) / 60_000), 23 * 60 + 59,
+    'a process that boots just after midnight waits for tomorrow, and cannot double-spend today',
+  )
+})
+
+test('being exactly on the hour schedules tomorrow rather than firing immediately', () => {
+  // A zero delay would fire at once. On a restart landing precisely at midnight that
+  // would be defensible, but the same code path runs after a failed round too, and a
+  // retry loop at 00:00 would spend the day's budget repeatedly.
+  const exactlyMidnight = new Date(2026, 8, 18, 0, 0, 0, 0)
+  assert.equal(Math.round(nextBoceDelayMs(0, exactlyMidnight) / 60_000), 24 * 60)
+})
+
+test('a non-midnight hour is honoured, so the sample can be moved off the boundary', () => {
+  const at1000 = new Date(2026, 8, 18, 10, 0, 0)
+  assert.equal(Math.round(nextBoceDelayMs(3, at1000) / 60_000), 17 * 60, '03:00 is 17h away')
+  assert.equal(Math.round(nextBoceDelayMs(23, at1000) / 60_000), 13 * 60, '23:00 is 13h away')
 })

@@ -224,7 +224,7 @@ function boceRanToday(now = Date.now()) {
 
 function scheduleBoce() {
   if (!config.boce.enabled) return
-  const delayMs = nextBoceDelayMs(config.boce.hourOfDay)
+  const delayMs = nextBoceDelayMs(config.boce.hourOfDay, config.boce.minuteOfHour)
   boceTimer = setTimeout(async () => {
     // Guard against a manual round (or an unusual restart) having already sampled
     // today. The schedule being wall-clock-aligned makes a double-spend unlikely
@@ -236,9 +236,15 @@ function scheduleBoce() {
     }
     scheduleBoce()
   }, delayMs)
-  boceTimer.unref?.()
+  // Deliberately NOT unref'd. It was, and the daily round stopped happening: an
+  // unref'd timer does not hold the event loop open, so while the process stays busy
+  // with the 30-minute probe loop this one can be pushed past its hour indefinitely —
+  // the journal shows the CN sample running on Sep 18 and Sep 19 and then nothing,
+  // with the process up the whole time. The cost of holding the loop open is nothing
+  // (the local probe loop already keeps the process alive), and the cost of losing a
+  // day is a grey cell on the page.
   process.stdout.write(
-    `boce: next CN sample in ${Math.round(delayMs / 60_000)}m (daily at ${String(config.boce.hourOfDay).padStart(2, '0')}:00 local)\n`,
+    `boce: next CN sample in ${Math.round(delayMs / 60_000)}m (daily at ${String(config.boce.hourOfDay).padStart(2, '0')}:${String(config.boce.minuteOfHour).padStart(2, '0')} local)\n`,
   )
 }
 

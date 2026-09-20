@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { COMPONENTS } from '../lib/components.mjs'
 
 const ROOT = resolve(import.meta.dirname, '..')
 
@@ -75,6 +76,7 @@ before(async () => {
       BOCE_ENABLED: 'false',
       COMMENTS_HEALTH_URL: `${stubBase}/health`,
       HRT_HEALTH_URL: `${stubBase}/health`,
+      HRT_MCP_HEALTH_URL: `${stubBase}/health`,
       HRT_WEB_URL: `${stubBase}/health`,
       SITE_URL: `${stubBase}/health`,
       HRT_STATS_URL: `${stubBase}/stats`,
@@ -169,7 +171,10 @@ test('history.json carries 90 days for each component', async () => {
   const res = await fetch(`${serviceBase}/status/history.json`)
   assert.equal(res.status, 200)
   const body = await res.json()
-  assert.equal(body.components.length, 5)
+  // Every row the register declares, so a component added to `components.mjs` without
+  // a probe target fails here rather than showing up as a permanently grey row.
+  assert.equal(body.components.length, COMPONENTS.length)
+  assert.ok(COMPONENTS.length >= 5, 'the five originals are still there')
   for (const c of body.components) {
     assert.equal(c.days.length, 90, `${c.id} has a full window`)
   }
@@ -217,6 +222,7 @@ test('the probes actually probed the stub, and recorded successes', async () => 
   // The stub answers 200 for every probe target, so these are green.
   assert.equal(by.hrt_web.state, 'green')
   assert.equal(by.hrt_api.state, 'green')
+  assert.equal(by.hrt_mcp.state, 'green', 'the MCP readiness route is probed like any other local target')
   assert.equal(by.comments_api.state, 'green')
   assert.equal(by.site_overseas.state, 'green')
   // boce is disabled in this run, so the CN row has nothing — grey, and it must not

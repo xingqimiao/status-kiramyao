@@ -603,8 +603,10 @@ test('unconfigured Cloudflare is skipped, and the metric stays absent', () => {
 test('the CN schedule targets the configured hour, not an interval from boot', () => {
   // 06:12 local. Midnight has passed, so the next one is tomorrow's — this is exactly
   // the restart in the incident, and the answer must be ~17h48m, not 24h and not 0.
+  // The second argument is the minute past that hour, so these pass 0 to keep talking
+  // about midnight itself; the shipped default is five past.
   const at0612 = new Date(2026, 8, 18, 6, 12, 15)
-  const delay = nextBoceDelayMs(0, at0612)
+  const delay = nextBoceDelayMs(0, 0, at0612)
   assert.equal(Math.round(delay / 60_000), 17 * 60 + 48, 'the remaining minutes to midnight')
 
   // The delay depends on the wall clock, so two different boot times converge on the
@@ -612,11 +614,11 @@ test('the CN schedule targets the configured hour, not an interval from boot', (
   // 23:00 to midnight is 60 minutes less the seconds component of `now`, so round to
   // the hour rather than to the minute.
   const at2300 = new Date(2026, 8, 18, 23, 0, 0)
-  assert.equal(Math.round(nextBoceDelayMs(0, at2300) / HOUR) , 1, 'one hour from 23:00')
+  assert.equal(Math.round(nextBoceDelayMs(0, 0, at2300) / HOUR), 1, 'one hour from 23:00')
 
   const at0001 = new Date(2026, 8, 18, 0, 1, 0)
   assert.equal(
-    Math.round(nextBoceDelayMs(0, at0001) / 60_000), 23 * 60 + 59,
+    Math.round(nextBoceDelayMs(0, 0, at0001) / 60_000), 23 * 60 + 59,
     'a process that boots just after midnight waits for tomorrow, and cannot double-spend today',
   )
 })
@@ -626,11 +628,28 @@ test('being exactly on the hour schedules tomorrow rather than firing immediatel
   // would be defensible, but the same code path runs after a failed round too, and a
   // retry loop at 00:00 would spend the day's budget repeatedly.
   const exactlyMidnight = new Date(2026, 8, 18, 0, 0, 0, 0)
-  assert.equal(Math.round(nextBoceDelayMs(0, exactlyMidnight) / 60_000), 24 * 60)
+  assert.equal(Math.round(nextBoceDelayMs(0, 0, exactlyMidnight) / 60_000), 24 * 60)
 })
 
 test('a non-midnight hour is honoured, so the sample can be moved off the boundary', () => {
   const at1000 = new Date(2026, 8, 18, 10, 0, 0)
-  assert.equal(Math.round(nextBoceDelayMs(3, at1000) / 60_000), 17 * 60, '03:00 is 17h away')
-  assert.equal(Math.round(nextBoceDelayMs(23, at1000) / 60_000), 13 * 60, '23:00 is 13h away')
+  assert.equal(Math.round(nextBoceDelayMs(3, 0, at1000) / 60_000), 17 * 60, '03:00 is 17h away')
+  assert.equal(Math.round(nextBoceDelayMs(23, 0, at1000) / 60_000), 13 * 60, '23:00 is 13h away')
+})
+
+test('the sample sits inside the day it belongs to, not on its boundary', () => {
+  // The default is 00:05 rather than 00:00, and the difference is the whole point: at
+  // exactly midnight the round lands on the boundary and today's cell stays grey until
+  // it does. Five minutes in, the day has a sample from its first moments.
+  const at0000 = new Date(2026, 8, 18, 0, 0, 0, 0)
+  assert.equal(Math.round(nextBoceDelayMs(0, 5, at0000) / 60_000), 5, 'five past midnight is five minutes away')
+
+  const at0004 = new Date(2026, 8, 18, 0, 4, 0)
+  assert.equal(Math.round(nextBoceDelayMs(0, 5, at0004) / 60_000), 1, 'and it is still ahead one minute earlier')
+
+  const at0006 = new Date(2026, 8, 18, 0, 6, 0)
+  assert.equal(
+    Math.round(nextBoceDelayMs(0, 5, at0006) / 60_000), 24 * 60 - 1,
+    'past it, the next one is tomorrow — the same rule the hour boundary uses',
+  )
 })

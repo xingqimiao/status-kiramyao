@@ -12,6 +12,8 @@
  * needs to be able to see and stop it without stopping the page.
  */
 import { createServer } from 'node:http'
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 import { loadConfig } from './lib/config.mjs'
 import { openDb, createStore } from './lib/db.mjs'
@@ -20,13 +22,39 @@ import {
   readCloudflareVisits, nextBoceDelayMs,
 } from './lib/probe.mjs'
 import { buildSnapshot, HEALTH_COMPONENT } from './lib/snapshot.mjs'
-import { renderPage, renderHistory } from './lib/view.mjs'
+import { renderPage, renderHistory, renderRobots, renderSitemap } from './lib/view.mjs'
+// The one day boundary both the page and the spend guard use. Keeping it a single
+// imported function is what stops the guard from cutting "today" differently from
+// the cell the reader sees.
+import { startOfStatusDay } from './lib/aggregate.mjs'
 
 const config = loadConfig()
 const db = openDb(config.dataFile)
 const store = createStore(db)
 
 let currentSnapshot = buildSnapshot(store, config)
+
+/**
+ * The only files this service serves as files.
+ *
+ * Everything else is inlined in the one self-contained document. A favicon cannot
+ * be inlined without changing the policy to allow `data:`, so the four sizes live
+ * on disk and are read once at boot: a request never touches the disk, the same
+ * way it never touches the network. Missing files are simply not routed, so a
+ * checkout without the assets still boots and renders.
+ */
+const STATIC_DIR = resolve(import.meta.dirname, 'static')
+const STATIC_FILES = new Map(
+  [
+    ['/favicon-32.png', 'favicon-32.png'],
+    ['/apple-touch-icon.png', 'apple-touch-icon.png'],
+    ['/icon-192.png', 'icon-192.png'],
+    ['/icon-512.png', 'icon-512.png'],
+  ]
+    .map(([route, name]) => [route, resolve(STATIC_DIR, name)])
+    .filter(([, full]) => existsSync(full))
+    .map(([route, full]) => [route, readFileSync(full)]),
+)
 
 /**
  * Note that nothing here is `await`ed by a request.
@@ -173,6 +201,41 @@ const server = createServer((req, res) => {
     return
   }
 
+  // The favicon set. Same-origin, so `img-src 'self'` already permits them and
+  // the policy does not move. Cached hard: the bytes only change when the file
+  // changes, which is a deploy.
+  const icon = STATIC_FILES.get(path)
+  if (icon) {
+    res.writeHead(200, {
+      'Content-Type': 'image/png',
+      'Content-Length': icon.length,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      ...SECURITY_HEADERS,
+    })
+    res.end(icon)
+    return
+  }
+
+  if (path === '/robots.txt') {
+    res.writeHead(200, {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'public, max-age=3600',
+      ...SECURITY_HEADERS,
+    })
+    res.end(renderRobots(config))
+    return
+  }
+
+  if (path === '/sitemap.xml') {
+    res.writeHead(200, {
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=3600',
+      ...SECURITY_HEADERS,
+    })
+    res.end(renderSitemap(config))
+    return
+  }
+
   send(res, 404, 'not found')
 })
 
@@ -214,12 +277,18 @@ function sendJson(res, status, body) {
  */
 let boceTimer = null
 
-/** Whether a CN sample was already taken today, so a second one is not bought. */
+/**
+ * Whether a CN sample was already taken today, so a second one is not bought.
+ *
+ * "Today" is the same fixed GMT+8 day the page draws (`startOfStatusDay`), not the
+ * host's midnight. On a host in another zone the two disagree, and the wrong one
+ * either buys a second sample for a day the page already shows or skips the one it
+ * is waiting for — this call is the one that costs money.
+ */
 function boceRanToday(now = Date.now()) {
-  const startOfDay = new Date(now)
-  startOfDay.setHours(0, 0, 0, 0)
+  const startOfDay = startOfStatusDay(now)
   const newest = store.latestFor('site_cn')
-  return newest !== null && newest.at >= startOfDay.getTime()
+  return newest !== null && newest.at >= startOfDay
 }
 
 function scheduleBoce() {

@@ -330,13 +330,25 @@ test('the page reports the overall verdict and shows every component', () => {
   const snapshot = buildSnapshot(store, testConfig(), { now: NOW })
   const html = renderPage(snapshot, testConfig())
   assert.ok(html.includes('所有系统正常运行'), 'the banner states the verdict')
-  assert.ok(html.includes('Kira Tracker'), 'and a configured component is listed')
+  assert.ok(html.includes('Kira HRT Tracker'), 'and a configured component is listed under its current name')
   assert.ok(html.includes('s-green'), 'with its state class')
   // Every row is named after the thing watched, never the vantage point: a reader
   // cannot act on "本站", and the two site rows are told apart by CN / Global.
   assert.ok(html.includes('kiramyao.com'), 'the site row uses its real name')
   assert.ok(html.includes('>CN<') && html.includes('>Global<'), 'and is split by vantage point')
   assert.ok(!html.includes('本站'), 'the vague label is gone')
+})
+
+test('the page states its dates are GMT+8, and nothing claims UTC', () => {
+  // The footer's claim has to match what the cells and timestamps actually show, or
+  // it is a second, quieter version of the original bug.
+  const store = freshStore()
+  seedGreen(store, 'hrt_web')
+  const html = renderPage(buildSnapshot(store, testConfig(), { now: NOW }), testConfig())
+  assert.ok(html.includes('所有日期均按 GMT+8 显示'), 'the footer names the zone')
+  assert.ok(html.includes('数据最多可能有 5 分钟延迟'), 'and the freshness bound')
+  assert.ok(html.includes('GMT+8</p>'), 'the generated time carries the same zone')
+  assert.ok(!html.includes('UTC'), 'nothing on the page still claims UTC')
 })
 
 test('a missing metric renders an em dash rather than a zero', () => {

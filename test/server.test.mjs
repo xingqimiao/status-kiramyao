@@ -230,3 +230,52 @@ test('the probes actually probed the stub, and recorded successes', async () => 
   assert.equal(by.site_cn.state, 'grey')
   assert.equal(body.overall, 'green')
 })
+
+// --- SEO and the icon -------------------------------------------------------
+
+test('the head carries what a crawler reads, and the old name is gone', async () => {
+  const res = await fetch(`${serviceBase}/status/`, { headers: { Accept: 'text/html' } })
+  const html = await res.text()
+  // The page is named after what it covers. The product it monitors is named in the
+  // row for that product, which is a different thing from the page's own title.
+  assert.match(html, /<title>KiraMyao 服务状态<\/title>/)
+  assert.match(html, /<meta name="description" content="[^"]+">/)
+  assert.match(html, /<link rel="canonical" href="https:\/\/status\.kiramyao\.com\/status\/">/)
+  assert.match(html, /property="og:image" content="https:\/\/status\.kiramyao\.com\/status\/icon-512\.png"/)
+  assert.match(html, /name="twitter:card"/)
+  assert.ok(!html.includes('Kira Tracker'), 'the retired product name appears nowhere')
+  assert.ok(html.includes('Kira HRT Tracker'), 'the current name does, as the row label')
+  assert.ok(!html.includes('服务状态 · Kira'), "the page title is its own, not the product's")
+  // The name appears because this page reports on that product, not because the page
+  // markets it. "agent-friendly, over MCP" and "made by KiraEqual" are claims for the
+  // tracker's own site, and they were removed from here on the owner's instruction:
+  // a status page that advertises is a status page nobody trusts.
+  assert.ok(!html.includes('KiraEqual 出品'), 'the status page does not sell the product')
+  assert.ok(!html.includes('对 AI 助手友好'), 'nor repeats its marketing')
+})
+
+test('the icon is served same-origin, the only fetch the CSP allows', async () => {
+  const res = await fetch(`${serviceBase}/status/favicon-32.png`)
+  assert.equal(res.status, 200)
+  assert.match(res.headers.get('content-type'), /image\/png/)
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  assert.deepEqual([...bytes.slice(0, 4)], [0x89, 0x50, 0x4e, 0x47], 'PNG magic, not an HTML error page')
+  // IHDR width sits at byte 16 as a big-endian uint32; the generator must not
+  // have cropped the 1:1 source into something non-square.
+  assert.equal(new DataView(bytes.buffer).getUint32(16), 32, 'the icon is actually 32px wide')
+  assert.equal(new DataView(bytes.buffer).getUint32(20), 32, 'and 32px tall')
+  const csp = (await fetch(`${serviceBase}/status/`, { headers: { Accept: 'text/html' } }))
+    .headers.get('content-security-policy')
+  assert.match(csp, /img-src 'self'/, 'the policy already allows same-origin images')
+})
+
+test('robots.txt and sitemap.xml point at the one page and nothing else', async () => {
+  const robots = await (await fetch(`${serviceBase}/status/robots.txt`)).text()
+  assert.match(robots, /User-agent: \*/)
+  assert.match(robots, /Sitemap: https:\/\/status\.kiramyao\.com\/status\/sitemap\.xml/)
+  const sitemapRes = await fetch(`${serviceBase}/status/sitemap.xml`)
+  assert.match(sitemapRes.headers.get('content-type'), /application\/xml/)
+  const sitemap = await sitemapRes.text()
+  assert.equal((sitemap.match(/<loc>/g) ?? []).length, 1, 'one page, one loc')
+  assert.match(sitemap, /<loc>https:\/\/status\.kiramyao\.com\/status\/<\/loc>/)
+})

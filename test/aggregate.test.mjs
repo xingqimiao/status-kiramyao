@@ -13,7 +13,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
-  buildDays, currentState, dayKey, mergeDay, overallState, stateForProbes, uptime, worse,
+  buildDays, currentState, dayKey, mergeDay, overallState, startOfStatusDay,
+  stateForProbes, uptime, worse,
 } from '../lib/aggregate.mjs'
 import { deriveIncidents } from '../lib/incidents.mjs'
 
@@ -124,21 +125,48 @@ test('probes land on the right day, and the state follows from them', () => {
 })
 
 test('a probe at either end of a day belongs to that day', () => {
-  const midnightUtc = Date.UTC(2026, 8, 17, 0, 0, 0)
+  // A GMT+8 day runs 16:00Z to 15:59:59Z, not midnight to midnight UTC. Both ends
+  // of 2026-09-17 Beijing time must land on that same cell. The instants are spelled
+  // out in UTC so the assertion does not follow the machine's own zone.
+  const startOfDay = Date.UTC(2026, 8, 16, 16, 0, 0)
   const days = buildDays({
-    overseasProbes: [ok(midnightUtc), ok(midnightUtc + DAY - 1)],
+    overseasProbes: [ok(startOfDay), ok(startOfDay + DAY - 1)],
     cnProbes: [],
     now: NOW,
     days: 2,
     cnExpected: false,
   })
-  assert.equal(days[1].state, 'green', 'both probes of 09-17 are on 09-17')
+  assert.equal(days[1].state, 'green', 'both probes of 09-17 GMT+8 are on 09-17')
   assert.equal(days[1].day, '2026-09-17')
 })
 
-test('dayKey is UTC, so a day boundary is not the host timezone’s', () => {
-  assert.equal(dayKey(Date.UTC(2026, 8, 17, 23, 59, 59)), '2026-09-17')
-  assert.equal(dayKey(Date.UTC(2026, 8, 18, 0, 0, 0)), '2026-09-18')
+test('the window turns over at 16:00Z, because it is cut in GMT+8', () => {
+  // 2026-09-17 01:00 Beijing is still 2026-09-16 in UTC. The last cell must be the
+  // 17th, which is the reported bug in one assertion.
+  const days = buildDays({
+    overseasProbes: [], cnProbes: [],
+    now: Date.UTC(2026, 8, 16, 17, 0, 0), days: 3, cnExpected: false,
+  })
+  assert.deepEqual(days.map((d) => d.day), ['2026-09-15', '2026-09-16', '2026-09-17'])
+})
+
+test('dayKey cuts days in Asia/Shanghai (GMT+8), not UTC and not the host zone', () => {
+  // The regression: the boce CN sample is taken at 00:05 Beijing on the 21st, which
+  // is 16:05Z on the 20th. Under the old UTC rule it landed on the previous cell and
+  // the owner saw yesterday turn green while today stayed grey.
+  assert.equal(dayKey(Date.UTC(2026, 8, 20, 16, 5, 0)), '2026-09-21', '00:05 Beijing is the 21st')
+  // A GMT+8 day runs 16:00Z to 15:59:59Z.
+  assert.equal(dayKey(Date.UTC(2026, 8, 17, 15, 59, 59)), '2026-09-17', '23:59:59 GMT+8')
+  assert.equal(dayKey(Date.UTC(2026, 8, 17, 16, 0, 0)), '2026-09-18', '00:00:00 GMT+8')
+  // 2026-09-17 23:59:59 UTC is already the 18th in GMT+8 — the rule this replaced.
+  assert.equal(dayKey(Date.UTC(2026, 8, 17, 23, 59, 59)), '2026-09-18', 'not a UTC cut')
+})
+
+test('startOfStatusDay is the GMT+8 midnight the spend guard shares', () => {
+  // 00:05 Beijing on the 21st and 23:59 Beijing on the 20th are on either side of
+  // the boundary the boce same-day guard uses.
+  assert.equal(startOfStatusDay(Date.UTC(2026, 8, 20, 16, 5, 0)), Date.UTC(2026, 8, 20, 16, 0, 0))
+  assert.equal(startOfStatusDay(Date.UTC(2026, 8, 20, 15, 59, 0)), Date.UTC(2026, 8, 19, 16, 0, 0))
 })
 
 // --- uptime -----------------------------------------------------------------

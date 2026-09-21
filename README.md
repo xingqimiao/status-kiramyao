@@ -88,6 +88,16 @@ Stories preserved is counted from the site's own machine-readable catalogue
 `deploy/kira-status.service` a hardened systemd unit. Note that a
 `status.kiramyao.com` DNS record has to exist before the Caddy block will serve.
 
+## The Cloudflare Worker
+
+Because this page is served by the same box it monitors, the owner approved moving it
+to a Worker: probes from Cloudflare's edge, history in D1, the page on a Worker, plus an
+origin heartbeat for what only the origin can see. That implementation lives in
+`worker/` and is additive — this Node service keeps running, and the page it serves
+remains correct, until the Worker is verified and the DNS record is moved. The runbook,
+the origin-probe finding, the D1 schema and the cutover steps are in
+`worker/README.md`; `bin/export-d1.mjs` migrates the history.
+
 ## Data
 
 Two SQLite tables in `data/`:

@@ -10,6 +10,9 @@
   "scripts": {
     "start": "node server.mjs",
     "probe": "node bin/probe-once.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs worker/test/*.test.mjs",
+    "test:worker": "node --test worker/test/*.test.mjs",
+    "verify:freshness": "node worker/verify-freshness.mjs",
+    "export:d1": "node bin/export-d1.mjs"
   }
 }

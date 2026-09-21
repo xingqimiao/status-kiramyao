@@ -1,0 +1,15 @@
+# Copy to worker/.dev.vars for 'wrangler dev'. Never commit the real file.
+# These are the Worker secrets; everything non-secret lives in wrangler.toml [vars].
+
+# The Access application's audience tag (Access app -> Settings -> Application Audience).
+ACCESS_AUD=replace-me
+
+# The origin heartbeat bearer token.
+HEARTBEAT_TOKEN=replace-me
+
+# The out-of-zone prober's bearer token for POST /ingest/probe.
+PROBE_TOKEN=replace-me
+
+# Optional: the Cloudflare edge-visit tiles. Both or neither.
+CF_ANALYTICS_TOKEN=
+CF_ZONE_TAG=

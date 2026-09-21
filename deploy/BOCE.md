@@ -133,6 +133,20 @@ Not implemented, and each for a stated reason:
 - **A CN-side probe of `hrt.kiramyao.com`.** Would roughly double the bill for a
   second opinion on a subdomain.
 
+## Where it runs
+
+The Worker cannot run it. A cron invocation is CPU-metered and short-lived, while a
+sample is a create call plus an asynchronous poll (up to ~2 minutes), so the adapter runs
+on the out-of-zone prober -- the host that already holds `PROBE_TOKEN` and reports
+`POST /ingest/probe`. It takes one sample per Beijing day, gated by
+`/var/lib/status-probe/last-boce-day`, so a retry cannot buy a second sample, and appends
+the rows to the same POST as the five inbound readings: the ingest endpoint replaces every
+`source='external'` row at the round's timestamp, so a separate POST would erase the other
+half of the round. `site_cn` is on that endpoint's allowed component list for this reason.
+The Worker's `BOCE_ENABLED` decides only whether a CN sample is *expected* (the
+`cnExpected` cap in `mergeDay`) and which cadence the row goes stale on, not whether a
+sample is taken.
+
 ## Operating rules the adapter enforces
 
 - **A page view never triggers a boce call.** The adapter runs only from the probe

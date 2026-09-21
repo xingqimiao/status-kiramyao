@@ -1,6 +1,15 @@
 data/
 .env
 node_modules/
+.wrangler/
+worker/.dry-run/
+.dev.vars
+worker/.dev.vars
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# Local secrets. Never committed.
+.probe-token
+.dev.vars
+*.token

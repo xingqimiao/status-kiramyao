@@ -1,0 +1,82 @@
+# Wrangler configuration for the status Worker.
+#
+# Everything the Worker needs to exist is here or in migrations/, not only in the
+# dashboard: the D1 binding, the schedule, the custom domain, and the vars. Secrets
+# (ACCESS_AUD, HEARTBEAT_TOKEN, PROBE_TOKEN, CF_ANALYTICS_TOKEN, CF_ZONE_TAG) are set with
+# 'wrangler secret put' and are deliberately not in this file.
+
+name = "kira-status"
+main = "src/index.mjs"
+compatibility_date = "2026-09-21"
+
+# The Worker must only be reachable through status.kiramyao.com, where the Cloudflare
+# Access application and its policy are attached. A workers.dev route is a second
+# hostname that the Access policy does not cover, so it is switched off here and the
+# Worker also verifies the Access JWT itself (worker/src/access.mjs) -- belt and braces.
+workers_dev = false
+preview_urls = false
+
+# The favicon set. Wrangler serves a matching file without invoking the Worker; any
+# other path falls through to src/index.mjs. Same bytes as ../static, one origin.
+[assets]
+directory = "../static"
+binding = "ASSETS"
+
+[[routes]]
+pattern = "status.kiramyao.com"
+custom_domain = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kira-status"
+# Replace after 'wrangler d1 create kira-status'. 'name' is not unique, 'id' is.
+database_id = "83588e3c-4020-4339-817f-bd5115bf15bc"
+migrations_dir = "migrations"
+
+# Every 10 minutes. Cloudflare cron expressions are 5-field with a 0-59 minute field,
+# so */10 is valid on both the Free and Paid plans (the documented minimum granularity
+# is one minute; the Free plan's tighter constraint is the 5-triggers-per-account cap
+# and a 10 ms CPU budget, not the schedule). Cron executes in UTC; the page still cuts
+# its days at GMT+8 (lib/aggregate.mjs) -- the schedule and the day boundary are
+# independent.
+[triggers]
+crons = ["*/10 * * * *"]
+
+[vars]
+SITE_NAME = "KiraMyao"
+PUBLIC_ORIGIN = "https://status.kiramyao.com"
+BASE_PATH = "/"
+HISTORY_DAYS = "90"
+PROBE_INTERVAL_MINUTES = "10"
+
+# There is deliberately no origin/DNS override here. Probes go to the public proxied
+# hostnames and prove freshness from the response itself: a unique ?nonce= per request
+# (a distinct cache key), cf.cacheTtl 0, and a required no-store response. See
+# worker/src/probe.mjs and the origin contract in worker/README.md.
+
+# Targets. Same env keys the Node service uses, so a change is a config change.
+COMMENTS_HEALTH_URL = "https://api.kiramyao.com/comments/health"
+HRT_HEALTH_URL = "https://api.kiramyao.com/hrt/health"
+HRT_MCP_HEALTH_URL = "https://api.kiramyao.com/hrt/mcp/health"
+# Dedicated probe files -- small, own path, so the real site's caching is untouched and
+# the no-store header can be scoped to them. Pinned in worker/ORIGIN-CONTRACT.md.
+HRT_WEB_URL = "https://hrt.kiramyao.com/.well-known/status-probe.txt"
+SITE_URL = "https://kiramyao.com/.well-known/status-probe.txt"
+HRT_STATS_URL = "https://api.kiramyao.com/hrt/stats"
+COMMENTS_STATS_URL = "https://api.kiramyao.com/comments/stats"
+STORIES_CATALOG_URL = "https://kiramyao.com/.well-known/api-catalog.json"
+
+# The CN dimension. The boce sample itself runs on the out-of-zone prober (it cannot run
+# here: see worker/src/config.mjs) and reports through POST /ingest/probe. This switch is
+# what tells the snapshot a CN sample is expected -- with it on, a day that produced no CN
+# reading is capped at amber rather than reading green, and site_cn goes stale on the daily
+# cadence instead of the ten-minute one.
+BOCE_ENABLED = "true"
+BOCE_INTERVAL_HOURS = "24"
+
+# Cloudflare Access application protecting status.kiramyao.com/admin. The AUD tag is
+# in the Access app's settings; it is a secret so it is set with 'wrangler secret put'.
+ACCESS_TEAM_DOMAIN = "steep-thunder-479c.cloudflareaccess.com"
+
+# A heartbeat older than this many minutes is not a reading; the page shows "—".
+HEARTBEAT_STALE_MINUTES = "15"

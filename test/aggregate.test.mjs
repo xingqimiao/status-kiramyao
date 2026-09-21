@@ -13,8 +13,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import {
-  buildDays, currentState, dayKey, mergeDay, overallState, startOfStatusDay,
-  stateForProbes, uptime, worse,
+  buildDays, currentState, dayKey, measuredWindowDays, mergeDay, overallState,
+  startOfStatusDay, stateForProbes, statusDayIndex, uptime, worse,
 } from '../lib/aggregate.mjs'
 import { deriveIncidents } from '../lib/incidents.mjs'
 
@@ -111,6 +111,29 @@ test('the window is exactly N days, oldest first, today last', () => {
   // Every day present, including the empty ones: a gap must keep its cell or the
   // strip silently compresses and a long outage looks like a short one.
   assert.ok(days.every((d) => d.state === 'grey'))
+})
+
+test('the measured span is the days the data covers, capped at the window', () => {
+  const today = statusDayIndex(NOW)
+  // Never probed: 0, which is what keeps a four-day-old page from saying 90.
+  assert.equal(measuredWindowDays(null, today, 90), 0)
+  assert.equal(measuredWindowDays(undefined, today, 90), 0)
+  assert.equal(measuredWindowDays(NaN, today, 90), 0)
+  // Four Beijing days of readings is four days, whatever HISTORY_DAYS is.
+  assert.equal(measuredWindowDays(today - 3, today, 90), 4)
+  assert.equal(measuredWindowDays(today, today, 90), 1)
+  // A full window answers with the full window: the cap is the window, not the data.
+  assert.equal(measuredWindowDays(today - 200, today, 90), 90)
+  // A future-dated reading cannot produce a negative or zero span.
+  assert.equal(measuredWindowDays(today + 5, today, 90), 1)
+})
+
+test('statusDayIndex cuts at GMT+8 midnight, exactly like dayKey', () => {
+  // 15:59:59Z is still the 17th in Beijing; one second later is the 18th. NOW is
+  // 12:00Z on the 17th, i.e. 20:00 Beijing, so it is the same cell as the first.
+  assert.equal(statusDayIndex(Date.UTC(2026, 8, 17, 15, 59, 59)), statusDayIndex(NOW))
+  assert.equal(statusDayIndex(Date.UTC(2026, 8, 17, 16, 0, 0)), statusDayIndex(NOW) + 1)
+  assert.equal(statusDayIndex(NOW + 2 * DAY) - statusDayIndex(NOW), 2)
 })
 
 test('probes land on the right day, and the state follows from them', () => {

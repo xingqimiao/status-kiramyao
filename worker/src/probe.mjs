@@ -58,6 +58,27 @@ async function readCapped(res, limit) {
  * always sent (it is what makes the URL unique); it is only *required* back where the
  * origin is app code that can reflect it.
  */
+/**
+ * What went wrong, in words a reader can act on.
+ *
+ * `fetch` rejects with a bare `TypeError: fetch failed` and puts the real reason —
+ * `ENOTFOUND`, `ECONNREFUSED`, a TLS error — on `.cause`, which undici may nest one
+ * level further. Reporting only the outer message is the same failure as `HTTP 000`:
+ * the string is true and explains nothing, and it reads identically whether the hostname
+ * does not resolve or the port is shut. Walk the cause chain and lead with the innermost
+ * reason, falling back to the outer message only when there is no cause at all.
+ */
+function describeFetchFailure(error, timeoutMs) {
+  if (error?.name === 'AbortError') return `timeout after ${timeoutMs}ms`
+  let deepest = error
+  // Bounded: a malformed object graph should not spin.
+  for (let i = 0; i < 5 && deepest?.cause; i++) deepest = deepest.cause
+  const message = deepest?.message || error?.message || String(error)
+  const code = deepest?.code ?? error?.code
+  if (code && message && !message.includes(code)) return `${message} (${code})`
+  return message
+}
+
 export async function probeFresh(url, {
   nonce, expectEcho = false, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
@@ -94,7 +115,14 @@ export async function probeFresh(url, {
     const nonCacheable = isNonCacheable(cacheControl)
 
     let error = null
-    if (!statusOk) error = `HTTP ${res.status}`
+    // `status === 0` is Cloudflare's answer for a request that never reached an origin —
+    // a DNS failure, a refused connection, a handshake that did not finish. It arrives as
+    // a Response rather than as a throw, so it lands here rather than in `catch`, and `0`
+    // is not an HTTP status code: `HTTP 0` reads to the user as "HTTP something", and the
+    // page padded it to `HTTP 000`, which reads as a status nobody can look up. Say what
+    // actually happened instead.
+    if (res.status === 0) error = 'no answer from the origin — it refused the connection or could not be reached'
+    else if (!statusOk) error = `HTTP ${res.status}`
     else if (isCachedStatus(cacheStatus)) error = `cached copy answered (cf-cache-status: ${cacheStatus})`
     else if (Number.isFinite(age) && age > 0) error = `cached copy answered (Age: ${age}s)`
     else if (!nonCacheable) error = `origin did not declare a non-reusable response (Cache-Control: ${cacheControl || 'absent'})`
@@ -121,7 +149,7 @@ export async function probeFresh(url, {
       ok: false,
       statusCode: null,
       latencyMs: Date.now() - started,
-      error: caught.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : (caught.message || String(caught)),
+      error: describeFetchFailure(caught, timeoutMs),
       nonce,
       echoed: false,
       expectEcho,

@@ -139,3 +139,81 @@ test('max-age=0 with must-revalidate counts as non-reusable (what Pages emits)',
   })
   assert.ok(results.every((r) => r.ok), JSON.stringify(results.map((r) => [r.component, r.error])))
 })
+
+/**
+ * A fetch that returns a Response with `status: 0`.
+ *
+ * That is the shape Cloudflare gives a request that never reached an origin — a DNS
+ * failure, a refused connection, a handshake that did not finish. It is a *response*
+ * object, not a thrown error, so it lands on the status-checking branch rather than in
+ * `catch`, and `0` is not an HTTP status code: saying `HTTP 0` tells the reader nothing
+ * about what went wrong. It is also what the page rendered as "HTTP 000", which is the
+ * reason this test exists.
+ */
+function statusZeroResponse() {
+  // Hand-built rather than `new Response('', { status: 0 })`: the standard forbids a
+  // status outside 200-599, so Node and workerd both throw on it — which is exactly why
+  // this path is easy to leave untested and why it shipped. Only the three members
+  // probe.mjs touches are needed.
+  return {
+    status: 0,
+    headers: { get: () => null },
+    text: async () => '',
+  }
+}
+
+test('a fetch that never reached an origin is named, not reported as HTTP 0', async () => {
+  const results = await runWorkerProbeRound(store(), makeConfig(), {
+    now: NOW,
+    fetchImpl: async () => statusZeroResponse(),
+  })
+  const errors = results.map((r) => r.error)
+  assert.ok(results.every((r) => r.ok === false), 'status 0 is a failure')
+  assert.ok(
+    errors.every((e) => e && !/\bHTTP\s+0+\b/.test(e)),
+    `no error may read "HTTP 0"/"HTTP 000": ${JSON.stringify(errors)}`,
+  )
+  assert.ok(
+    errors.every((e) => /no answer|unreachable|refused|not be reached/i.test(e)),
+    `the error should say the request never got an answer: ${JSON.stringify(errors)}`,
+  )
+})
+
+test('a real status still reads as its own number', async () => {
+  const results = await runWorkerProbeRound(store(), makeConfig(), {
+    now: NOW,
+    fetchImpl: async () => new Response('nope', { status: 503 }),
+  })
+  assert.ok(
+    results.every((r) => r.error === 'HTTP 503'),
+    JSON.stringify(results.map((r) => r.error)),
+  )
+})
+
+/**
+ * `fetch` rejects with a TypeError whose message is the useless string "fetch failed";
+ * the reason it could not connect — ENOTFOUND, ECONNREFUSED, a TLS error — is on
+ * `.cause`. Reporting the outer message tells the reader nothing they did not already
+ * know from the row being red, which is the same failure as "HTTP 000" in a different
+ * spelling: a string that is technically true and explains nothing.
+ */
+test('a rejected fetch reports the underlying cause, not "fetch failed"', async () => {
+  const results = await runWorkerProbeRound(store(), makeConfig(), {
+    now: NOW,
+    fetchImpl: async () => {
+      const err = new TypeError('fetch failed')
+      err.cause = Object.assign(new Error('getaddrinfo ENOTFOUND hrt.example'), { code: 'ENOTFOUND' })
+      throw err
+    },
+  })
+  const errors = results.map((r) => r.error)
+  assert.ok(results.every((r) => r.ok === false), 'a rejected fetch is a failure')
+  assert.ok(
+    errors.every((e) => e !== 'fetch failed'),
+    `"fetch failed" must not reach the page: ${JSON.stringify(errors)}`,
+  )
+  assert.ok(
+    errors.every((e) => /ENOTFOUND|getaddrinfo|name not known|could not be resolved/i.test(e)),
+    `the cause should survive: ${JSON.stringify(errors)}`,
+  )
+})

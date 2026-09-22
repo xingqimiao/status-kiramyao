@@ -191,6 +191,7 @@ test('the data guardian reads the stubbed upstreams', async () => {
     await new Promise((r) => setTimeout(r, 250))
   }
   assert.equal(body.guardian.accounts, 5, 'the account count came from the aggregate')
+  assert.equal(body.guardian.doses, 9, 'the dose count came from the aggregate')
   assert.equal(body.guardian.selfDeletions, 2)
   assert.equal(body.guardian.commentUsers, 3)
   assert.equal(body.guardian.comments, 11)

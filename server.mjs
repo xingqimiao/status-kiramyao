@@ -85,6 +85,7 @@ async function metricsRound() {
     // a zero, would make the page assert something nobody measured.
     if (hrt.ok) {
       store.addMetric('hrt.accounts', hrt.accounts, now)
+      store.addMetric('hrt.doses', hrt.doses, now)
       store.addMetric('hrt.self_deletions', hrt.selfDeletions, now)
     } else {
       process.stderr.write(`hrt stats unavailable: ${hrt.error}\n`)

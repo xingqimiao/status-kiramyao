@@ -206,6 +206,7 @@ export async function runWorkerMetricsRound(store, config, { now = Date.now(), f
 
   if (hrt.ok) {
     await store.addMetric('hrt.accounts', hrt.accounts, now)
+    await store.addMetric('hrt.doses', hrt.doses, now)
     await store.addMetric('hrt.self_deletions', hrt.selfDeletions, now)
   }
   if (comments.ok) {

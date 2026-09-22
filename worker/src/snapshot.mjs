@@ -269,6 +269,7 @@ function buildGuardian(metrics, healthTotals, config, { now, availabilityDays = 
 
   return {
     accounts: asNumber(value('hrt.accounts')),
+    doses: asNumber(value('hrt.doses')),
     selfDeletions: asNumber(value('hrt.self_deletions')),
     commentUsers: asNumber(value('comments.users')),
     comments: asNumber(value('comments.comments')),
